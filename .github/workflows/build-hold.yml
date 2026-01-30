@@ -31,7 +31,7 @@ jobs:
     - name: Install dependencies
       run: |
         brew install autoconf automake libtool gnu-sed gettext \
-          libsodium protobuf lowdown pkgconf openssl make sqlite
+          libsodium protobuf lowdown pkgconf openssl make sqlite postgresql
     
     - name: Set environment variables
       run: |
