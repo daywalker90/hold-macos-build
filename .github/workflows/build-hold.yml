@@ -44,6 +44,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         python-version: 3.13
+        enable-cache: false
     
     - name: Checkout Hold ${{ inputs.hold_version }}
       uses: actions/checkout@v6
