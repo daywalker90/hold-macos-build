@@ -1,0 +1,120 @@
+name: Build CLN for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      cln_versions:
+        description: 'CLN versions to build (comma-separated, e.g., v24.05,v24.02.2,v23.11)'
+        required: true
+        default: 'v25.09.3,v25.12.1'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Prepare version matrix
+        id: set-matrix
+        run: |
+          # Convert comma-separated input to JSON array
+          VERSIONS="${{ github.event.inputs.cln_versions }}"
+          # Remove spaces and convert to JSON array
+          JSON_ARRAY=$(echo $VERSIONS | tr ',' '\n' | jq -R . | jq -s -c .)
+          echo "matrix={\"cln_version\":$JSON_ARRAY}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare
+    runs-on: macos-latest
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
+    
+    steps:    
+    - name: Verify Homebrew location
+      run: |
+        BREW_PATH=$(which brew)
+        PKG_CONFIG_PATH=$(which pkg-config)
+        echo "Brew location: $BREW_PATH"
+        echo "pkg-config location: $PKG_CONFIG_PATH"
+        
+        if [[ "$BREW_PATH" != "/opt/homebrew/bin/brew" ]]; then
+          echo "Error: Homebrew not at expected Apple Silicon location"
+          exit 1
+        fi
+    
+    - name: Install dependencies
+      run: |
+        brew install autoconf automake libtool python3 gnu-sed gettext \
+          libsodium protobuf lowdown pkgconf openssl make sqlite
+    
+    - name: Set environment variables
+      run: |
+        echo 'export PATH="/opt/homebrew/opt/:$PATH"' >> $GITHUB_ENV
+        echo 'export CPATH=/opt/homebrew/include' >> $GITHUB_ENV
+        echo 'export LIBRARY_PATH=/opt/homebrew/lib' >> $GITHUB_ENV
+        echo "/opt/homebrew/bin" >> $GITHUB_PATH
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: 3.13
+    
+    - name: Checkout CLN ${{ matrix.cln_version }}
+      uses: actions/checkout@v6
+      with:
+        repository: ElementsProject/lightning
+        ref: ${{ matrix.cln_version }}
+    
+    - name: Build CLN
+      run: |
+        export PATH="/opt/homebrew/opt/:$PATH"
+        export CPATH=/opt/homebrew/include
+        export LIBRARY_PATH=/opt/homebrew/lib
+        export RUST_PROFILE=release
+        
+        # Initialize Python environment
+        uv sync --all-extras --all-groups --frozen
+        
+        # Configure
+        ./configure --prefix=$HOME/cln-install
+        
+        # Verify no Intel compatibility issues
+        if grep -r "/usr/local" config.log; then
+          echo "Error: Intel compatibility dependency detected in /usr/local"
+          exit 1
+        fi
+        
+        # Build
+        uv run gmake -j$(sysctl -n hw.ncpu)
+        
+        # Install to prefix
+        uv run gmake install
+    
+    - name: Verify installation
+      run: |
+        $HOME/cln-install/bin/lightningd --version
+        $HOME/cln-install/bin/lightning-cli --version
+    
+    - name: Create tarball
+      run: |
+        tar -czf $HOME/cln-macos-${{ matrix.cln_version }}.tar.gz -C $HOME/cln-install .
+        
+    - name: Create Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        VERSION=${{ matrix.cln_version }}
+        
+        # Create release if it doesn't exist
+        gh release create $VERSION --repo ${{ github.repository }} \
+          --title "CLN $VERSION for macOS Apple Silicon" \
+          --notes "Pre-built Core Lightning $VERSION binaries for macOS Apple Silicon (arm64)" \
+          || true
+        
+        # Upload the artifact
+        gh release upload $VERSION $HOME/cln-macos-$VERSION.tar.gz \
+          --repo ${{ github.repository }} --clobber
