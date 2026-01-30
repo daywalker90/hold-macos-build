@@ -1,0 +1,82 @@
+name: Build CLN for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      hold_version:
+        description: 'hold version to build'
+        required: true
+        default: 'v0.3.3'
+
+permissions:
+  contents: write
+
+jobs:
+
+  build:
+    runs-on: macos-latest    
+    steps:    
+    - name: Verify Homebrew location
+      run: |
+        BREW_PATH=$(which brew)
+        PKG_CONFIG_PATH=$(which pkg-config)
+        echo "Brew location: $BREW_PATH"
+        echo "pkg-config location: $PKG_CONFIG_PATH"
+        
+        if [[ "$BREW_PATH" != "/opt/homebrew/bin/brew" ]]; then
+          echo "Error: Homebrew not at expected Apple Silicon location"
+          exit 1
+        fi
+    
+    - name: Install dependencies
+      run: |
+        brew install autoconf automake libtool gnu-sed gettext \
+          libsodium protobuf lowdown pkgconf openssl make sqlite
+    
+    - name: Set environment variables
+      run: |
+        echo 'export PATH="/opt/homebrew/opt/:$PATH"' >> $GITHUB_ENV
+        echo 'export CPATH=/opt/homebrew/include' >> $GITHUB_ENV
+        echo 'export LIBRARY_PATH=/opt/homebrew/lib' >> $GITHUB_ENV
+        echo "/opt/homebrew/bin" >> $GITHUB_PATH
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: 3.13
+    
+    - name: Checkout Hold ${{ inputs.hold_version }}
+      uses: actions/checkout@v6
+      with:
+        repository: BoltzExchange/hold
+        ref: ${{ inputs.hold_version }}
+    
+    - name: Build Hold
+      run: |
+        export PATH="/opt/homebrew/opt/:$PATH"
+        export CPATH=/opt/homebrew/include
+        export LIBRARY_PATH=/opt/homebrew/lib
+        
+        cargo build --release
+        
+    - name: Create tarball
+      run: |
+        mkdir -p build
+        cp target/release/hold build/hold-darwin
+        tar -czf $HOME/hold-darwin-${{ inputs.hold_version }}.tar.gz build
+        
+    - name: Create Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        VERSION=${{ inputs.hold_version }}
+        
+        # Create release if it doesn't exist
+        gh release create $VERSION --repo ${{ github.repository }} \
+          --title "Hold $VERSION for macOS Apple Silicon" \
+          --notes "Pre-built Hold plugin $VERSION binaries for macOS Apple Silicon (arm64)" \
+          || true
+        
+        # Upload the artifact
+        gh release upload $VERSION $HOME/hold-darwin-$VERSION.tar.gz \
+          --repo ${{ github.repository }} --clobber
