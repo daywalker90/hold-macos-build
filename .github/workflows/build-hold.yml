@@ -1,4 +1,4 @@
-name: Build CLN for macOS
+name: Build Hold plugin for macOS
 
 on:
   workflow_dispatch:
