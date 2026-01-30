@@ -56,6 +56,8 @@ jobs:
         export PATH="/opt/homebrew/opt/:$PATH"
         export CPATH=/opt/homebrew/include
         export LIBRARY_PATH=/opt/homebrew/lib
+        export RUSTFLAGS="-L /opt/homebrew/opt/postgresql/lib"
+        export CFLAGS="-I/opt/homebrew/opt/postgresql/include"
         
         cargo build --release
         
